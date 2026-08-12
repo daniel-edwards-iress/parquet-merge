@@ -1,0 +1,99 @@
+name: Build and Publish Binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BINARY_NAME: parquet-merge
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive_ext: tar.gz
+          - name: macos-aarch64
+            runner: macos-14
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+          - name: windows-x64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+          - name: windows-aarch64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            archive_ext: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          asset_name="${BINARY_NAME}-${{ matrix.target }}"
+          cp "target/${{ matrix.target }}/release/${BINARY_NAME}" "$asset_name"
+          tar -C . -czf "dist/${asset_name}.tar.gz" "$asset_name"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $assetName = "${env:BINARY_NAME}-${{ matrix.target }}"
+          Copy-Item "target/${{ matrix.target }}/release/${env:BINARY_NAME}.exe" "$assetName.exe"
+          Compress-Archive -Path "$assetName.exe" -DestinationPath "dist/$assetName.zip" -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+
+  publish:
+    name: Publish GitHub Release Assets
+    needs: build
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Flatten artifact directories
+        shell: bash
+        run: |
+          mkdir -p dist
+          find release-assets -type f -maxdepth 3 -exec cp {} dist/ \;
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
