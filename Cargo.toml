@@ -15,4 +15,4 @@ parquet = { version = "59.2.0", features = ["arrow"] }
 
 [dev-dependencies]
 arrow-array = "59.2.0"
-arrow-schema = "59.2.0"
+arrow-schema = "60.0.0"
